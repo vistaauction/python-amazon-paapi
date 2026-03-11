@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 
 from amazon_creatorsapi.aio.auth import (
+    COGNITO_SCOPE,
     GRANT_TYPE,
-    SCOPE,
+    LWA_SCOPE,
     TOKEN_EXPIRATION_BUFFER,
     VERSION_ENDPOINTS,
     AsyncOAuth2TokenManager,
 )
 from amazon_creatorsapi.errors import AuthenticationError
-from creatorsapi_python_sdk.auth.credential_versions import V3_SCOPE
 
 
 class TestAsyncOAuth2TokenManagerInit(unittest.TestCase):
@@ -61,7 +61,9 @@ class TestAsyncOAuth2TokenManagerInit(unittest.TestCase):
             version="3.1",
         )
 
+        self.assertEqual(manager._version, "3.1")
         self.assertEqual(manager._auth_endpoint, VERSION_ENDPOINTS["3.1"])
+        self.assertTrue(manager.is_lwa())
 
     def test_with_custom_endpoint(self) -> None:
         """Test initialization with custom auth endpoint."""
@@ -85,6 +87,18 @@ class TestAsyncOAuth2TokenManagerInit(unittest.TestCase):
             )
 
         self.assertIn("Unsupported version", str(context.exception))
+
+    def test_returns_cognito_scope_for_v2(self) -> None:
+        """Test v2 versions use the Cognito scope."""
+        manager = AsyncOAuth2TokenManager("id", "secret", "2.2")
+
+        self.assertEqual(manager.get_scope(), COGNITO_SCOPE)
+
+    def test_returns_lwa_scope_for_v3(self) -> None:
+        """Test v3 versions use the LWA scope."""
+        manager = AsyncOAuth2TokenManager("id", "secret", "3.1")
+
+        self.assertEqual(manager.get_scope(), LWA_SCOPE)
 
 
 class TestAsyncOAuth2TokenManagerIsTokenValid(unittest.TestCase):
@@ -237,16 +251,21 @@ class TestAsyncOAuth2TokenManagerRefreshToken(unittest.IsolatedAsyncioTestCase):
         )
 
         # Verify correct request was made
-        call_args = mock_client.post.call_args
-        self.assertIn(GRANT_TYPE, str(call_args))
-        self.assertIn(SCOPE, str(call_args))
+        call_kwargs = mock_client.post.call_args.kwargs
+        self.assertEqual(call_kwargs["data"]["grant_type"], GRANT_TYPE)
+        self.assertEqual(call_kwargs["data"]["scope"], COGNITO_SCOPE)
+        self.assertEqual(
+            call_kwargs["headers"]["Content-Type"],
+            "application/x-www-form-urlencoded",
+        )
+        self.assertNotIn("json", call_kwargs)
 
     @patch("amazon_creatorsapi.aio.auth.httpx.AsyncClient")
-    async def test_v3_uses_json_token_request(
+    async def test_successful_token_refresh_for_lwa(
         self,
         mock_async_client_class: MagicMock,
     ) -> None:
-        """Version 3.x should use the LwA JSON token request format."""
+        """Test LWA token refresh uses JSON payload and LWA scope."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -259,23 +278,16 @@ class TestAsyncOAuth2TokenManagerRefreshToken(unittest.IsolatedAsyncioTestCase):
         mock_client.__aenter__.return_value = mock_client
         mock_async_client_class.return_value = mock_client
 
-        manager = AsyncOAuth2TokenManager("test_id", "test_secret", "3.3")
+        manager = AsyncOAuth2TokenManager("test_id", "test_secret", "3.1")
 
         token = await manager.refresh_token()
 
         self.assertEqual(token, "fresh_token")
-        _, kwargs = mock_client.post.call_args
-        self.assertEqual(kwargs["headers"]["Content-Type"], "application/json")
-        self.assertEqual(
-            kwargs["json"],
-            {
-                "grant_type": GRANT_TYPE,
-                "client_id": "test_id",
-                "client_secret": "test_secret",
-                "scope": V3_SCOPE,
-            },
-        )
-        self.assertNotIn("data", kwargs)
+        call_kwargs = mock_client.post.call_args.kwargs
+        self.assertEqual(call_kwargs["json"]["grant_type"], GRANT_TYPE)
+        self.assertEqual(call_kwargs["json"]["scope"], LWA_SCOPE)
+        self.assertEqual(call_kwargs["headers"]["Content-Type"], "application/json")
+        self.assertNotIn("data", call_kwargs)
 
     @patch("amazon_creatorsapi.aio.auth.httpx.AsyncClient")
     async def test_raises_error_on_non_200_response(

@@ -1,6 +1,6 @@
 # Custom folders and files to ignore
-.idea/
 .vscode/
+.idea/
 .DS_Store
 coverage_html_report
 

@@ -19,20 +19,26 @@ except ImportError as exc:  # pragma: no cover
     )
     raise ImportError(msg) from exc
 
-from creatorsapi_python_sdk.auth.credential_versions import (
-    TOKEN_GRANT_TYPE,
-    V2_SCOPE,
-    VERSION_ENDPOINTS,
-    get_credential_version_settings,
-)
-
 
 # OAuth2 constants
-SCOPE = V2_SCOPE
-GRANT_TYPE = TOKEN_GRANT_TYPE
+COGNITO_SCOPE = "creatorsapi/default"
+LWA_SCOPE = "creatorsapi::default"
+# Backward-compatible alias for existing v2.x users.
+SCOPE = COGNITO_SCOPE
+GRANT_TYPE = "client_credentials"
 
 # Token expiration buffer in seconds (refresh 30s before actual expiration)
 TOKEN_EXPIRATION_BUFFER = 30
+
+# Version to auth endpoint mapping
+VERSION_ENDPOINTS = {
+    "2.1": "https://creatorsapi.auth.us-east-1.amazoncognito.com/oauth2/token",
+    "2.2": "https://creatorsapi.auth.eu-south-2.amazoncognito.com/oauth2/token",
+    "2.3": "https://creatorsapi.auth.us-west-2.amazoncognito.com/oauth2/token",
+    "3.1": "https://api.amazon.com/auth/o2/token",
+    "3.2": "https://api.amazon.co.uk/auth/o2/token",
+    "3.3": "https://api.amazon.co.jp/auth/o2/token",
+}
 
 
 class AsyncOAuth2TokenManager:
@@ -63,8 +69,7 @@ class AsyncOAuth2TokenManager:
         self._credential_id = credential_id
         self._credential_secret = credential_secret
         self._version = version
-        self._settings = get_credential_version_settings(version, auth_endpoint)
-        self._auth_endpoint = self._settings.token_endpoint
+        self._auth_endpoint = self._determine_auth_endpoint(version, auth_endpoint)
 
         self._access_token: str | None = None
         self._expires_at: float | None = None
@@ -88,7 +93,23 @@ class AsyncOAuth2TokenManager:
             ValueError: If version is not supported and no custom endpoint provided.
 
         """
-        return get_credential_version_settings(version, auth_endpoint).token_endpoint
+        if auth_endpoint and auth_endpoint.strip():
+            return auth_endpoint
+
+        if version not in VERSION_ENDPOINTS:
+            supported = ", ".join(VERSION_ENDPOINTS.keys())
+            msg = f"Unsupported version: {version}. Supported versions are: {supported}"
+            raise ValueError(msg)
+
+        return VERSION_ENDPOINTS[version]
+
+    def is_lwa(self) -> bool:
+        """Return whether this token manager uses the LWA auth flow."""
+        return self._version.startswith("3.")
+
+    def get_scope(self) -> str:
+        """Return the version-appropriate OAuth2 scope."""
+        return LWA_SCOPE if self.is_lwa() else COGNITO_SCOPE
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -161,21 +182,23 @@ class AsyncOAuth2TokenManager:
             "grant_type": GRANT_TYPE,
             "client_id": self._credential_id,
             "client_secret": self._credential_secret,
-            "scope": self._settings.scope,
-        }
-
-        headers = {
-            "Content-Type": self._settings.token_content_type,
+            "scope": self.get_scope(),
         }
 
         try:
             async with httpx.AsyncClient() as client:
-                request_kwargs = {"headers": headers}
-                if self._settings.token_request_encoding == "json":
-                    request_kwargs["json"] = request_data
+                if self.is_lwa():
+                    response = await client.post(
+                        self._auth_endpoint,
+                        json=request_data,
+                        headers={"Content-Type": "application/json"},
+                    )
                 else:
-                    request_kwargs["data"] = request_data
-                response = await client.post(self._auth_endpoint, **request_kwargs)
+                    response = await client.post(
+                        self._auth_endpoint,
+                        data=request_data,
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    )
 
             if response.status_code != 200:  # noqa: PLR2004
                 self.clear_token()
