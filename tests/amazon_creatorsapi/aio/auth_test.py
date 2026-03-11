@@ -14,6 +14,7 @@ from amazon_creatorsapi.aio.auth import (
     AsyncOAuth2TokenManager,
 )
 from amazon_creatorsapi.errors import AuthenticationError
+from creatorsapi_python_sdk.auth.credential_versions import V3_SCOPE
 
 
 class TestAsyncOAuth2TokenManagerInit(unittest.TestCase):
@@ -51,6 +52,16 @@ class TestAsyncOAuth2TokenManagerInit(unittest.TestCase):
         )
 
         self.assertEqual(manager._auth_endpoint, VERSION_ENDPOINTS["2.3"])
+
+    def test_with_version_31(self) -> None:
+        """Test initialization with version 3.1."""
+        manager = AsyncOAuth2TokenManager(
+            credential_id="test_id",
+            credential_secret="test_secret",
+            version="3.1",
+        )
+
+        self.assertEqual(manager._auth_endpoint, VERSION_ENDPOINTS["3.1"])
 
     def test_with_custom_endpoint(self) -> None:
         """Test initialization with custom auth endpoint."""
@@ -229,6 +240,42 @@ class TestAsyncOAuth2TokenManagerRefreshToken(unittest.IsolatedAsyncioTestCase):
         call_args = mock_client.post.call_args
         self.assertIn(GRANT_TYPE, str(call_args))
         self.assertIn(SCOPE, str(call_args))
+
+    @patch("amazon_creatorsapi.aio.auth.httpx.AsyncClient")
+    async def test_v3_uses_json_token_request(
+        self,
+        mock_async_client_class: MagicMock,
+    ) -> None:
+        """Version 3.x should use the LwA JSON token request format."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "access_token": "fresh_token",
+            "expires_in": 7200,
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_async_client_class.return_value = mock_client
+
+        manager = AsyncOAuth2TokenManager("test_id", "test_secret", "3.3")
+
+        token = await manager.refresh_token()
+
+        self.assertEqual(token, "fresh_token")
+        _, kwargs = mock_client.post.call_args
+        self.assertEqual(kwargs["headers"]["Content-Type"], "application/json")
+        self.assertEqual(
+            kwargs["json"],
+            {
+                "grant_type": GRANT_TYPE,
+                "client_id": "test_id",
+                "client_secret": "test_secret",
+                "scope": V3_SCOPE,
+            },
+        )
+        self.assertNotIn("data", kwargs)
 
     @patch("amazon_creatorsapi.aio.auth.httpx.AsyncClient")
     async def test_raises_error_on_non_200_response(

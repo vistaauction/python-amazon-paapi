@@ -207,6 +207,42 @@ class TestAsyncAmazonCreatorsApiGetItems(unittest.IsolatedAsyncioTestCase):
 
     @patch("amazon_creatorsapi.aio.api.AsyncOAuth2TokenManager")
     @patch("amazon_creatorsapi.aio.api.AsyncHttpClient")
+    async def test_get_items_v3_uses_bearer_without_version_suffix(
+        self,
+        mock_http_client_class: MagicMock,
+        mock_token_manager_class: MagicMock,
+    ) -> None:
+        """Version 3.x should omit the Version suffix in API requests."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "itemsResult": {"items": [{"ASIN": "B0DLFMFBJW"}]}
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_http_client_class.return_value = mock_client
+
+        mock_token_manager = AsyncMock()
+        mock_token_manager.get_token.return_value = "test_token"
+        mock_token_manager_class.return_value = mock_token_manager
+
+        async with AsyncAmazonCreatorsApi(
+            credential_id="test_id",
+            credential_secret="test_secret",
+            version="3.1",
+            tag="test-tag",
+            country="US",
+            throttling=0,
+        ) as api:
+            await api.get_items(["B0DLFMFBJW"])
+
+        _, call_headers, _ = mock_client.post.call_args.args
+        self.assertEqual(call_headers["Authorization"], "Bearer test_token")
+
+    @patch("amazon_creatorsapi.aio.api.AsyncOAuth2TokenManager")
+    @patch("amazon_creatorsapi.aio.api.AsyncHttpClient")
     async def test_get_items_with_resources(
         self,
         mock_http_client_class: MagicMock,

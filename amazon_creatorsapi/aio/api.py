@@ -29,6 +29,10 @@ except ImportError as exc:  # pragma: no cover
     )
     raise ImportError(msg) from exc
 
+from creatorsapi_python_sdk.auth.credential_versions import (
+    SUPPORTED_VERSIONS_TEXT,
+    build_api_authorization_header,
+)
 from creatorsapi_python_sdk.models.get_browse_nodes_resource import (
     GetBrowseNodesResource,
 )
@@ -106,7 +110,7 @@ class AsyncAmazonCreatorsApi:
 
     Raises:
         InvalidArgumentError: If neither country nor marketplace is provided.
-        ValueError: If version is not supported (valid versions: 2.1, 2.2, 2.3).
+        ValueError: If version is not supported.
 
     """
 
@@ -155,8 +159,10 @@ class AsyncAmazonCreatorsApi:
 
         """
         if version not in VERSION_ENDPOINTS:
-            supported = ", ".join(VERSION_ENDPOINTS.keys())
-            msg = f"Unsupported version: {version}. Supported versions are: {supported}"
+            msg = (
+                f"Unsupported version: {version}. "
+                f"Supported versions are: {SUPPORTED_VERSIONS_TEXT}"
+            )
             raise ValueError(msg)
 
     async def __aenter__(self) -> Self:
@@ -483,7 +489,7 @@ class AsyncAmazonCreatorsApi:
         token = await self._token_manager.get_token()
 
         headers = {
-            "Authorization": f"Bearer {token}, Version {self._version}",
+            "Authorization": build_api_authorization_header(token, self._version),
             "Content-Type": "application/json; charset=utf-8",
             "x-marketplace": self.marketplace,
         }

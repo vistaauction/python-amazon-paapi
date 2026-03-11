@@ -388,7 +388,7 @@ class ApiClient:
             # Get token (will use cached token if valid)
             token = self._token_manager.get_token()
             # Add Authorization headers
-            header_params['Authorization'] = 'Bearer {}, Version {}'.format(token, self.version)
+            header_params['Authorization'] = self._token_manager.config.get_api_authorization_header(token)
         except Exception as error:
             raise error
 

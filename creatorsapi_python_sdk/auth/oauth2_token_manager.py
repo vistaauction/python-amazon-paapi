@@ -75,13 +75,18 @@ class OAuth2TokenManager:
             }
 
             headers = {
-                'Content-Type': 'application/x-www-form-urlencoded'
+                'Content-Type': self.config.get_token_content_type()
             }
+
+            request_kwargs = {'headers': headers}
+            if self.config.uses_json_token_request():
+                request_kwargs['json'] = request_data
+            else:
+                request_kwargs['data'] = request_data
 
             response = requests.post(
                 self.config.get_cognito_endpoint(),
-                data=request_data,
-                headers=headers
+                **request_kwargs
             )
             if response.status_code != 200:
                 raise Exception("OAuth2 token request failed with status {}: {}".format(response.status_code, response.text))
